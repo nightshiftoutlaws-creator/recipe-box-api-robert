@@ -9,6 +9,8 @@ import sqlite3
 
 from flask import Flask, g, jsonify, request
 
+from auth_utils import hash_password
+
 DATABASE = "recipes.db"
 
 app = Flask(__name__)
@@ -126,6 +128,48 @@ def delete_recipe(recipe_id):
     if cur.rowcount == 0:
         return jsonify({"error": "recipe not found"}), 404
     return "", 204
+
+
+def user_to_dict(row):
+    """Serialize a user row. Never includes password_hash."""
+    return {
+        "id": row["id"],
+        "email": row["email"],
+        "username": row["username"],
+        "created_at": row["created_at"],
+    }
+
+
+@app.post("/register")
+def register():
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "a JSON body is required"}), 400
+    for name in ("email", "username", "password"):
+        value = data.get(name)
+        if not isinstance(value, str) or not value.strip():
+            return jsonify(
+                {"error": "email, username and password are required"}
+            ), 400
+    email = data["email"].strip()
+    username = data["username"].strip()
+    password = data["password"]
+    db = get_db()
+    try:
+        cur = db.execute(
+            "INSERT INTO users (email, username, password_hash)"
+            " VALUES (?, ?, ?)",
+            (email, username, hash_password(password)),
+        )
+        db.commit()
+    except sqlite3.IntegrityError:
+        return jsonify(
+            {"error": "account with those details already exists"}
+        ), 409
+    row = db.execute(
+        "SELECT * FROM users WHERE id = ?", (cur.lastrowid,)
+    ).fetchone()
+    return jsonify(user_to_dict(row)), 201
 
 
 if __name__ == "__main__":
