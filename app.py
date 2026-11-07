@@ -9,7 +9,7 @@ import sqlite3
 
 from flask import Flask, g, jsonify, request
 
-from auth_utils import hash_password
+from auth_utils import hash_password, verify_password
 
 DATABASE = "recipes.db"
 
@@ -170,6 +170,35 @@ def register():
         "SELECT * FROM users WHERE id = ?", (cur.lastrowid,)
     ).fetchone()
     return jsonify(user_to_dict(row)), 201
+
+
+# Burned through whenever no user matches, so that a missing account and
+# a wrong password cost the same wall-clock time. Without this, the fast
+# path leaks which usernames exist even though the response is identical.
+_DUMMY_HASH = hash_password("timing-parity-placeholder")
+
+
+@app.post("/login")
+def login():
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "a JSON body is required"}), 400
+    identifier = data.get("username") or data.get("email")
+    password = data.get("password")
+    if not isinstance(identifier, str) or not identifier.strip():
+        return jsonify({"error": "credentials are required"}), 400
+    if not isinstance(password, str) or not password:
+        return jsonify({"error": "credentials are required"}), 400
+    identifier = identifier.strip()
+    row = get_db().execute(
+        "SELECT * FROM users WHERE username = ? OR email = ?",
+        (identifier, identifier),
+    ).fetchone()
+    stored_hash = row["password_hash"] if row is not None else _DUMMY_HASH
+    matched = verify_password(stored_hash, password)
+    if row is None or not matched:
+        return jsonify({"error": "invalid credentials"}), 401
+    return jsonify(user_to_dict(row))
 
 
 if __name__ == "__main__":
