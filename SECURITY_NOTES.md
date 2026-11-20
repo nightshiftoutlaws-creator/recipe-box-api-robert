@@ -63,3 +63,40 @@ Verified behaviour:
 - alg=none forgery        401
 - token signed with wrong secret  401
 - valid token with role edited to admin  401
+
+## End-to-end security audit, 2026-11-20
+
+Audited the recipe API against the course threat model. Every result below
+was verified at the database, not by status code alone.
+
+**Password storage.** All users store `password_hash`, pbkdf2:sha256, 103
+chars, per-user salt. No plaintext. pbkdf2 is pinned over Werkzeug's scrypt
+default for portability (LibreSSL builds lack scrypt); a deliberate decision,
+not a downgrade.
+
+**Authentication.** Write routes reject no token, forged token, wrong-secret
+token, and expired token, all 401, data unchanged. Verified with a
+row-diff harness that also confirmed a valid owner edit does change the row,
+proving the harness can detect a change.
+
+**Ownership.** On PATCH and DELETE: non-owner 403 row intact, owner and admin
+succeed. A refused delete was re-attempted and the row was still present.
+
+**Reads.** Anonymous GET /recipes returns only public recipes; the private
+seeded recipe does not leak. Private single-GET returns 404 to non-owners,
+byte-identical to a genuine 404.
+
+**Regression.** The two Unit 2 Lesson 1 attacks (anonymous PATCH and DELETE)
+now return 401 with no data change. The anonymous list no longer leaks the
+private recipe.
+
+**Verdict.** Clean for this course's single-service threat model:
+authentication, authorization, ownership and role all enforced and proven.
+
+**Known scars and accepted limitations.**
+- Recipe 1 is still titled "Shakshuka (edited by anonymous)", real damage
+  from the pre-auth window. Left in place as evidence; hardening prevents
+  recurrence but cannot undo prior damage.
+- Admins bypass ownership on writes only, not reads (documented above).
+- Out of scope, as a single service: TLS, rate limiting and brute-force
+  defense, secret/key management, OAuth/SSO, and secure account recovery.
