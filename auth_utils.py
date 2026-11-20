@@ -41,3 +41,10 @@ def create_access_token(user_id: int, username: str) -> str:
         "exp": now + TOKEN_LIFETIME,
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+def decode_access_token(token: str) -> dict:
+    """Return the token's claims. Raises jwt.PyJWTError if not valid."""
+    if not JWT_SECRET:
+        raise RuntimeError("JWT_SECRET is not set")
+    return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])

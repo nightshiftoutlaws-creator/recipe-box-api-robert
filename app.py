@@ -6,11 +6,13 @@ That is the point: you will add both, lesson by lesson, in Units 2 and 3.
 """
 
 import sqlite3
+from functools import wraps
 
+import jwt
 from flask import Flask, g, jsonify, request
 
-from auth_utils import (create_access_token, hash_password,
-                        verify_password)
+from auth_utils import (create_access_token, decode_access_token,
+                        hash_password, verify_password)
 
 DATABASE = "recipes.db"
 
@@ -30,6 +32,30 @@ def close_db(exception):
     db = g.pop("db", None)
     if db is not None:
         db.close()
+
+
+def require_auth(view):
+    """Reject the request unless it carries a valid Bearer token."""
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        header = request.headers.get("Authorization", "")
+        if not header.startswith("Bearer "):
+            return jsonify(
+                {"error": "missing or invalid Authorization header"}
+            ), 401
+        token = header[len("Bearer "):].strip()
+        if not token:
+            return jsonify(
+                {"error": "missing or invalid Authorization header"}
+            ), 401
+        try:
+            claims = decode_access_token(token)
+        except jwt.PyJWTError:
+            return jsonify({"error": "invalid or expired token"}), 401
+        g.current_user_id = int(claims["sub"])
+        g.current_username = claims.get("username")
+        return view(*args, **kwargs)
+    return wrapper
 
 
 def recipe_to_dict(row):
@@ -64,6 +90,7 @@ def get_recipe(recipe_id):
 
 
 @app.post("/recipes")
+@require_auth
 def create_recipe():
     data = request.get_json(silent=True)
     if not data or not data.get("title") or not data.get("ingredients"):
@@ -90,6 +117,7 @@ def create_recipe():
 
 
 @app.patch("/recipes/<int:recipe_id>")
+@require_auth
 def update_recipe(recipe_id):
     data = request.get_json(silent=True)
     if not data:
@@ -122,6 +150,7 @@ def update_recipe(recipe_id):
 
 
 @app.delete("/recipes/<int:recipe_id>")
+@require_auth
 def delete_recipe(recipe_id):
     db = get_db()
     cur = db.execute("DELETE FROM recipes WHERE id = ?", (recipe_id,))
