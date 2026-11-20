@@ -9,7 +9,8 @@ import sqlite3
 
 from flask import Flask, g, jsonify, request
 
-from auth_utils import hash_password, verify_password
+from auth_utils import (create_access_token, hash_password,
+                        verify_password)
 
 DATABASE = "recipes.db"
 
@@ -198,7 +199,13 @@ def login():
     matched = verify_password(stored_hash, password)
     if row is None or not matched:
         return jsonify({"error": "invalid credentials"}), 401
-    return jsonify(user_to_dict(row))
+    token = create_access_token(row["id"], row["username"])
+    return jsonify({
+        "id": row["id"],
+        "username": row["username"],
+        "access_token": token,
+        "token_type": "Bearer",
+    })
 
 
 if __name__ == "__main__":
