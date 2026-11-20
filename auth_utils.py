@@ -29,7 +29,8 @@ JWT_ALGORITHM = "HS256"
 TOKEN_LIFETIME = timedelta(hours=1)
 
 
-def create_access_token(user_id: int, username: str) -> str:
+def create_access_token(user_id: int, username: str,
+                        role: str = "user") -> str:
     """Return a signed JWT identifying the given user."""
     if not JWT_SECRET:
         raise RuntimeError("JWT_SECRET is not set")
@@ -37,6 +38,7 @@ def create_access_token(user_id: int, username: str) -> str:
     payload = {
         "sub": str(user_id),
         "username": username,
+        "role": role,
         "iat": now,
         "exp": now + TOKEN_LIFETIME,
     }

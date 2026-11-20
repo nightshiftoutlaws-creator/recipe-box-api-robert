@@ -60,6 +60,7 @@ def require_auth(view):
             ), 401
         g.current_user_id = int(claims["sub"])
         g.current_username = claims.get("username")
+        g.current_role = claims.get("role", "user")
         return view(*args, **kwargs)
     return wrapper
 
@@ -70,6 +71,7 @@ def optional_auth(view):
     def wrapper(*args, **kwargs):
         g.current_user_id = None
         g.current_username = None
+        g.current_role = None
         header = request.headers.get("Authorization", "")
         if header.startswith("Bearer "):
             token = header[len("Bearer "):].strip()
@@ -89,6 +91,7 @@ def optional_auth(view):
                 ), 401
             g.current_user_id = int(claims["sub"])
             g.current_username = claims.get("username")
+            g.current_role = claims.get("role", "user")
         return view(*args, **kwargs)
     return wrapper
 
@@ -111,6 +114,8 @@ def _owned_recipe_or_error(recipe_id):
     ).fetchone()
     if row is None:
         return None, (jsonify({"error": "recipe not found"}), 404)
+    if g.current_role == "admin":
+        return row, None
     if row["user_id"] is None or row["user_id"] != g.current_user_id:
         return None, (jsonify({"error": "you do not own this recipe"}), 403)
     return row, None
@@ -299,7 +304,9 @@ def login():
     matched = verify_password(stored_hash, password)
     if row is None or not matched:
         return jsonify({"error": "invalid credentials"}), 401
-    token = create_access_token(row["id"], row["username"])
+    token = create_access_token(
+        row["id"], row["username"], row["role"]
+    )
     return jsonify({
         "id": row["id"],
         "username": row["username"],
