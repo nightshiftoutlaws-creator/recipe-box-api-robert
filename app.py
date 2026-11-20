@@ -64,6 +64,35 @@ def require_auth(view):
     return wrapper
 
 
+def optional_auth(view):
+    """Populate identity when a token is present. Absent is fine."""
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        g.current_user_id = None
+        g.current_username = None
+        header = request.headers.get("Authorization", "")
+        if header.startswith("Bearer "):
+            token = header[len("Bearer "):].strip()
+            if not token:
+                return jsonify(
+                    {"error": "missing or invalid Authorization header"}
+                ), 401
+            try:
+                claims = decode_access_token(token)
+            except jwt.ExpiredSignatureError:
+                return jsonify(
+                    {"error": "token expired", "code": "token_expired"}
+                ), 401
+            except jwt.PyJWTError:
+                return jsonify(
+                    {"error": "invalid token", "code": "token_invalid"}
+                ), 401
+            g.current_user_id = int(claims["sub"])
+            g.current_username = claims.get("username")
+        return view(*args, **kwargs)
+    return wrapper
+
+
 def recipe_to_dict(row):
     return {
         "id": row["id"],
@@ -71,7 +100,20 @@ def recipe_to_dict(row):
         "ingredients": row["ingredients"],
         "instructions": row["instructions"],
         "is_public": bool(row["is_public"]),
+        "user_id": row["user_id"],
     }
+
+
+def _owned_recipe_or_error(recipe_id):
+    """Return (row, None) if the caller owns it, else (None, response)."""
+    row = get_db().execute(
+        "SELECT * FROM recipes WHERE id = ?", (recipe_id,)
+    ).fetchone()
+    if row is None:
+        return None, (jsonify({"error": "recipe not found"}), 404)
+    if row["user_id"] is None or row["user_id"] != g.current_user_id:
+        return None, (jsonify({"error": "you do not own this recipe"}), 403)
+    return row, None
 
 
 @app.get("/")
@@ -80,18 +122,33 @@ def hello():
 
 
 @app.get("/recipes")
+@optional_auth
 def list_recipes():
-    rows = get_db().execute("SELECT * FROM recipes ORDER BY id").fetchall()
+    db = get_db()
+    if g.current_user_id is None:
+        rows = db.execute(
+            "SELECT * FROM recipes WHERE is_public = 1 ORDER BY id"
+        ).fetchall()
+    else:
+        rows = db.execute(
+            "SELECT * FROM recipes WHERE is_public = 1 OR user_id = ?"
+            " ORDER BY id",
+            (g.current_user_id,),
+        ).fetchall()
     return jsonify([recipe_to_dict(r) for r in rows])
 
 
 @app.get("/recipes/<int:recipe_id>")
+@optional_auth
 def get_recipe(recipe_id):
     row = get_db().execute(
         "SELECT * FROM recipes WHERE id = ?", (recipe_id,)
     ).fetchone()
     if row is None:
         return jsonify({"error": "recipe not found"}), 404
+    if not row["is_public"]:
+        if g.current_user_id is None or row["user_id"] != g.current_user_id:
+            return jsonify({"error": "recipe not found"}), 404
     return jsonify(recipe_to_dict(row))
 
 
@@ -104,13 +161,15 @@ def create_recipe():
     db = get_db()
     try:
         cur = db.execute(
-            "INSERT INTO recipes (title, ingredients, instructions, is_public)"
-            " VALUES (?, ?, ?, ?)",
+            "INSERT INTO recipes"
+            " (title, ingredients, instructions, is_public, user_id)"
+            " VALUES (?, ?, ?, ?, ?)",
             (
                 data["title"],
                 data["ingredients"],
                 data.get("instructions", ""),
                 1 if data.get("is_public", True) else 0,
+                g.current_user_id,
             ),
         )
         db.commit()
@@ -125,6 +184,9 @@ def create_recipe():
 @app.patch("/recipes/<int:recipe_id>")
 @require_auth
 def update_recipe(recipe_id):
+    _row, err = _owned_recipe_or_error(recipe_id)
+    if err is not None:
+        return err
     data = request.get_json(silent=True)
     if not data:
         return jsonify({"error": "a JSON body is required"}), 400
@@ -158,6 +220,9 @@ def update_recipe(recipe_id):
 @app.delete("/recipes/<int:recipe_id>")
 @require_auth
 def delete_recipe(recipe_id):
+    _row, err = _owned_recipe_or_error(recipe_id)
+    if err is not None:
+        return err
     db = get_db()
     cur = db.execute("DELETE FROM recipes WHERE id = ?", (recipe_id,))
     db.commit()
