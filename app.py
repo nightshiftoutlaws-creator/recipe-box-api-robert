@@ -50,8 +50,14 @@ def require_auth(view):
             ), 401
         try:
             claims = decode_access_token(token)
+        except jwt.ExpiredSignatureError:
+            return jsonify(
+                {"error": "token expired", "code": "token_expired"}
+            ), 401
         except jwt.PyJWTError:
-            return jsonify({"error": "invalid or expired token"}), 401
+            return jsonify(
+                {"error": "invalid token", "code": "token_invalid"}
+            ), 401
         g.current_user_id = int(claims["sub"])
         g.current_username = claims.get("username")
         return view(*args, **kwargs)
