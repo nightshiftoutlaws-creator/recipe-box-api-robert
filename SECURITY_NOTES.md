@@ -36,3 +36,30 @@ find out who deleted recipe 2.
 - Requests will need to carry some form of identity.
 - Write operations will need to check that identity before acting.
 - `is_public` will need to be enforced on read, not just stored.
+
+## Admin scope, decided 2026-11-20
+
+Admins bypass ownership on writes (PATCH, DELETE) but get no special read
+access. An admin cannot read a private recipe they are able to delete.
+
+This is deliberate. Moderation needs the power to remove content, not the
+power to read everyone's private data. A universal read bypass would turn
+every admin account into a surveillance tool over user content, and a stolen
+admin token would then leak every private recipe in the system rather than
+just allowing destructive actions that are at least visible after the fact.
+
+Found during the Unit 3 pen test, where admin GET on a private recipe
+returned 404 while admin DELETE on the same recipe returned 204. The
+inconsistency was originally an accident: the bypass lives in
+require_recipe_access, which only guards writes. Keeping it.
+
+Verified behaviour:
+- anonymous write        401
+- authenticated non-owner 403
+- owner / admin write     200 or 204
+- unowned recipe, user    403
+- unowned recipe, admin   200
+- private read, anyone but owner  404
+- alg=none forgery        401
+- token signed with wrong secret  401
+- valid token with role edited to admin  401
