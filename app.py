@@ -107,18 +107,25 @@ def recipe_to_dict(row):
     }
 
 
-def _owned_recipe_or_error(recipe_id):
-    """Return (row, None) if the caller owns it, else (None, response)."""
-    row = get_db().execute(
-        "SELECT * FROM recipes WHERE id = ?", (recipe_id,)
-    ).fetchone()
-    if row is None:
-        return None, (jsonify({"error": "recipe not found"}), 404)
-    if g.current_role == "admin":
-        return row, None
-    if row["user_id"] is None or row["user_id"] != g.current_user_id:
-        return None, (jsonify({"error": "you do not own this recipe"}), 403)
-    return row, None
+def require_recipe_access(view):
+    """Load the recipe and refuse callers who may not modify it.
+
+    Must be applied inside require_auth: it relies on g.current_user_id
+    and g.current_role, which require_auth populates from the token.
+    """
+    @wraps(view)
+    def wrapper(recipe_id, *args, **kwargs):
+        row = get_db().execute(
+            "SELECT * FROM recipes WHERE id = ?", (recipe_id,)
+        ).fetchone()
+        if row is None:
+            return jsonify({"error": "recipe not found"}), 404
+        if g.current_role != "admin":
+            if row["user_id"] is None or row["user_id"] != g.current_user_id:
+                return jsonify({"error": "you do not own this recipe"}), 403
+        g.recipe = row
+        return view(recipe_id, *args, **kwargs)
+    return wrapper
 
 
 @app.get("/")
@@ -188,10 +195,8 @@ def create_recipe():
 
 @app.patch("/recipes/<int:recipe_id>")
 @require_auth
+@require_recipe_access
 def update_recipe(recipe_id):
-    _row, err = _owned_recipe_or_error(recipe_id)
-    if err is not None:
-        return err
     data = request.get_json(silent=True)
     if not data:
         return jsonify({"error": "a JSON body is required"}), 400
@@ -224,10 +229,8 @@ def update_recipe(recipe_id):
 
 @app.delete("/recipes/<int:recipe_id>")
 @require_auth
+@require_recipe_access
 def delete_recipe(recipe_id):
-    _row, err = _owned_recipe_or_error(recipe_id)
-    if err is not None:
-        return err
     db = get_db()
     cur = db.execute("DELETE FROM recipes WHERE id = ?", (recipe_id,))
     db.commit()
